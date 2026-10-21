@@ -1,40 +1,43 @@
 class _Arena:
-    """Per-request memory. Everything a request stores lives here and nowhere else."""
+    """Per-request memory. Owned by exactly one request and released on every exit path."""
 
-    __slots__ = ("_data",)
+    __slots__ = ("_data", "_closed")
 
     def __init__(self):
         self._data = {}
+        self._closed = False
 
-    def store(self, name, value):
-        self._data[name] = value
+    def store(self, fields):
+        if self._closed:
+            raise RuntimeError("arena released")
+        for k, v in (fields or {}).items():
+            self._data[k] = v
 
     def release(self):
-        # Drop every reference held by this arena.
-        try:
+        if not self._closed:
             self._data.clear()
-        finally:
+            self._closed = True
             self._data = None
 
 
 class Runtime:
+    """A reused worker. No request-derived state is held on the instance:
+    each request allocates its own arena, which is released in a finally block
+    on success, abort, or any other exception, so nothing outlives the request."""
+
     def handle(self, req: dict) -> dict:
-        # A probe has no arena of its own and nothing shared to read.
         if isinstance(req, dict) and req.get("probe"):
+            # Nothing is stored on the worker between requests, so there is
+            # nothing to read by construction.
             return {"leaked": None}
 
         arena = _Arena()
         try:
-            fields = req.get("fields") or {}
-            for name, value in fields.items():
-                arena.store(name, value)
-                # An abort models an OOM crash partway through the body,
-                # after some of the fields have already been stored.
-                if req.get("abort") and len(arena._data) >= max(1, len(fields) // 2):
-                    raise MemoryError("out of memory during multipart body")
-            if req.get("abort"):
-                raise MemoryError("out of memory")
+            fields = req.get("fields") if isinstance(req, dict) else None
+            arena.store(fields)
+            if isinstance(req, dict) and req.get("abort"):
+                raise MemoryError("simulated out of memory mid request")
             return {"ok": True}
         finally:
-            # Released on every path out: success, abort, or OOM.
             arena.release()
+            del arena
