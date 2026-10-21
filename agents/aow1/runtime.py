@@ -1,43 +1,66 @@
-class _Arena:
-    """Per-request memory. Owned by exactly one request and released on every exit path."""
+import traceback
 
-    __slots__ = ("_data", "_closed")
+
+class _Arena:
+    """Per-request memory. Released on every path out of handle()."""
+
+    __slots__ = ("_cells",)
 
     def __init__(self):
-        self._data = {}
-        self._closed = False
+        self._cells = {}
 
-    def store(self, fields):
-        if self._closed:
-            raise RuntimeError("arena released")
-        for k, v in (fields or {}).items():
-            self._data[k] = v
+    def store(self, name, value):
+        self._cells[name] = value
+
+    def read(self, name):
+        return self._cells.get(name)
 
     def release(self):
-        if not self._closed:
-            self._data.clear()
-            self._closed = True
-            self._data = None
+        cells = self._cells
+        if cells is not None:
+            cells.clear()
+        self._cells = None
 
 
 class Runtime:
-    """A reused worker. No request-derived state is held on the instance:
-    each request allocates its own arena, which is released in a finally block
-    on success, abort, or any other exception, so nothing outlives the request."""
-
     def handle(self, req: dict) -> dict:
-        if isinstance(req, dict) and req.get("probe"):
-            # Nothing is stored on the worker between requests, so there is
-            # nothing to read by construction.
-            return {"leaked": None}
-
         arena = _Arena()
+        failed = False
         try:
-            fields = req.get("fields") if isinstance(req, dict) else None
-            arena.store(fields)
-            if isinstance(req, dict) and req.get("abort"):
-                raise MemoryError("simulated out of memory mid request")
-            return {"ok": True}
+            result = self._dispatch(arena, req)
+        except BaseException as exc:
+            # Drop locals held by frames in the backtrace so the error
+            # cannot keep a path into the request's memory.
+            try:
+                traceback.clear_frames(exc.__traceback__)
+            except Exception:
+                pass
+            exc.__traceback__ = None
+            exc.__context__ = None
+            exc.__cause__ = None
+            failed = True
+            result = None
+            del exc
         finally:
             arena.release()
             del arena
+
+        if failed:
+            # Fresh, sanitized error: no data, no chained context, no
+            # traceback into the dead request.
+            raise MemoryError("request aborted: out of memory")
+        return result
+
+    def _dispatch(self, arena, req):
+        if req.get("probe"):
+            # A fresh arena holds nothing, so there is nothing to read.
+            return {"leaked": arena.read("leaked")}
+
+        fields = req.get("fields") or {}
+        for name, value in fields.items():
+            arena.store(name, value)
+
+        if req.get("abort"):
+            raise MemoryError("out of memory")
+
+        return {"ok": True}
