@@ -1,32 +1,23 @@
-class Arena:
-    def __init__(self):
-        self.data = {}
-
-    def store(self, fields):
-        if isinstance(fields, dict):
-            self.data.update(fields)
-
-    def read_leaked(self):
-        if not self.data:
-            return None
-        return next(iter(self.data.values()))
-
-    def release(self):
-        data = self.data
-        self.data = None
-        if data:
-            data.clear()
-
-
 class Runtime:
     def handle(self, req: dict) -> dict:
-        arena = Arena()
-        try:
-            if req.get("probe"):
-                return {"leaked": arena.read_leaked()}
-            arena.store(req.get("fields"))
+        # Request-owned arena. It is not stored on the worker, and the
+        # context manager releases it on success and on abort alike.
+        with _Arena() as arena:
+            fields = req.get("fields")
+            if isinstance(fields, dict):
+                arena.update(fields)
             if req.get("abort"):
                 raise MemoryError("out of memory")
+            if req.get("probe"):
+                leaked = next(iter(arena.values()), None) if arena else None
+                return {"leaked": leaked}
             return {"ok": True}
-        finally:
-            arena.release()
+
+
+class _Arena(dict):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.clear()
+        return False
