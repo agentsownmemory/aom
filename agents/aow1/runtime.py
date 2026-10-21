@@ -1,25 +1,27 @@
 class _Arena:
-    """Per-request memory. Everything a request stores lives here and
-    nowhere else, so releasing the arena releases the request's data."""
-
-    __slots__ = ("_cells",)
+    """Per-request memory. Owns everything stored during one request."""
+    __slots__ = ("_data",)
 
     def __init__(self):
-        self._cells = {}
+        self._data = {}
 
     def store(self, name, value):
-        self._cells[name] = value
+        self._data[name] = value
 
     def release(self):
-        self._cells.clear()
-        self._cells = None
+        # Drop every reference the arena holds.
+        self._data.clear()
+        self._data = None
 
 
 class Runtime:
+    def __init__(self):
+        # No request-visible state lives on the worker between requests.
+        pass
+
     def handle(self, req: dict) -> dict:
-        # A probe has no arena of its own and the runtime holds no
-        # request state between calls, so there is nothing to read.
-        if isinstance(req, dict) and req.get("probe"):
+        # Probe: there is no worker-level storage, so nothing can be read.
+        if req.get("probe"):
             return {"leaked": None}
 
         arena = _Arena()
@@ -28,8 +30,8 @@ class Runtime:
             for name, value in fields.items():
                 arena.store(name, value)
             if req.get("abort"):
-                raise MemoryError("simulated out of memory during request")
+                raise MemoryError("simulated out of memory mid-request")
             return {"ok": True}
         finally:
-            # Released on every path out: success, abort, or any error.
+            # Released on every path out: success, abort, or OOM.
             arena.release()
