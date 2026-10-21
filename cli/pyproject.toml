@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aom-proof"
+version = "0.1.0"
+description = "Replay the AOM proof locally: old PHP leaks, the agents' runtime holds."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+dependencies = []
+
+[project.scripts]
+aom = "aom_proof.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/agentsownmemory/aom"
+
+[tool.setuptools]
+packages = ["aom_proof"]
