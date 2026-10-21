@@ -1,17 +1,13 @@
 class Runtime:
-    __slots__ = ()
-
     def handle(self, req: dict) -> dict:
         arena = {}
         try:
-            if req.get("probe"):
-                return {"leaked": arena.get("fields")}
+            if req.get("probe", False):
+                return {"leaked": next(iter(arena.values()), None)}
 
-            arena["fields"] = {}
-            for name, value in req.get("fields", {}).items():
-                arena["fields"][name] = value
+            arena.update(req.get("fields", {}))
 
-            if req.get("abort"):
+            if req.get("abort", False):
                 raise MemoryError("Request aborted")
 
             return {"ok": True}
