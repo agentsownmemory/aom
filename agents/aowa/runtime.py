@@ -1,27 +1,51 @@
-class Runtime:
+import sys
+import traceback
+
+
+class _Arena:
+    __slots__ = ("data",)
+
     def __init__(self):
-        self.upload_progress = None
+        self.data = {}
+
+    def store(self, fields):
+        if isinstance(fields, dict):
+            self.data.update(fields)
+
+    def release(self):
+        data = self.data
+        self.data = None
+        if data is not None:
+            data.clear()
+
+
+def _run(req):
+    arena = _Arena()
+    try:
+        if req.get("probe"):
+            return {"leaked": None}
+        arena.store(req.get("fields"))
+        if req.get("abort"):
+            raise MemoryError()
+        return {"ok": True}
+    finally:
+        arena.release()
+        arena = None
+        req = None
+
+
+class Runtime:
+    __slots__ = ()
 
     def handle(self, req: dict) -> dict:
-        arena = {}
         try:
-            return self._run(req, arena)
+            return _run(req)
+        except BaseException:
+            tb = sys.exc_info()[2]
+            if tb is not None:
+                traceback.clear_frames(tb)
+            del tb
+            req = None
+            raise
         finally:
-            arena.clear()
-            self.upload_progress = None
-
-    def _run(self, req, arena):
-        if not isinstance(req, dict):
-            return {"ok": True}
-        if req.get("probe"):
-            return {"leaked": self.upload_progress}
-        fields = req.get("fields")
-        if isinstance(fields, dict):
-            arena.update(fields)
-        if "upload_progress" in req:
-            arena["upload_progress"] = req["upload_progress"]
-        if "upload_progress" in arena:
-            self.upload_progress = arena["upload_progress"]
-        if req.get("abort"):
-            raise MemoryError("out of memory")
-        return {"ok": True}
+            req = None
