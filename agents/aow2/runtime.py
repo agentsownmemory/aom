@@ -2,23 +2,23 @@ class Runtime:
     __slots__ = ()
 
     def handle(self, req: dict) -> dict:
-        arena = None
+        # This arena belongs exclusively to this invocation.
+        arena = {}
         try:
-            arena = {}
-
             if req.get("probe", False):
-                return {"leaked": arena.get("fields")}
+                return {"leaked": next(iter(arena.values()), None)}
 
-            arena["fields"] = dict(req.get("fields", {}))
+            fields = req.get("fields", {})
+            if not isinstance(fields, dict):
+                raise TypeError("fields must be a dictionary")
+
+            for name, value in fields.items():
+                arena[name] = value
 
             if req.get("abort", False):
-                raise MemoryError("Request aborted")
+                raise MemoryError("request aborted")
 
             return {"ok": True}
         finally:
-            # Tracebacks may retain this frame, so detach the input and
-            # empty the arena even when the request raises.
-            req = None
-            if arena is not None:
-                arena.clear()
-            arena = None
+            # Also runs on partial writes, aborts, and allocation failures.
+            arena.clear()
