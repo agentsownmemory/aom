@@ -15,4 +15,3 @@ class Runtime:
             return {"ok": True}
         finally:
             arena.clear()
-            del req
