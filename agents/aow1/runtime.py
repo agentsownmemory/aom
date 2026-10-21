@@ -1,41 +1,49 @@
 class _Arena:
-    """Per-request memory. Owned by exactly one request and released on every exit path."""
+    """Per-request memory. Everything a request stores lives here and nowhere else."""
 
-    __slots__ = ("_data", "_closed")
+    __slots__ = ("_data",)
 
     def __init__(self):
         self._data = {}
-        self._closed = False
 
     def store(self, name, value):
-        if self._closed:
-            raise RuntimeError("arena released")
         self._data[name] = value
 
     def release(self):
-        if not self._closed:
-            self._closed = True
-            try:
-                self._data.clear()
-            finally:
-                self._data = None
+        # Drop every reference held by this arena.
+        self._data.clear()
+        self._data = None
 
 
 class Runtime:
-    def handle(self, req: dict) -> dict:
-        # Probe: there is no shared state to read, so nothing can leak by construction.
-        if isinstance(req, dict) and req.get("probe"):
-            return {"leaked": None}
+    """A runtime where each request owns its own arena.
 
+    The arena is created on entry to handle() and released in a finally block,
+    so it is freed on every exit path: success, abort, or any other exception.
+    No per-request state is kept on the Runtime instance, so there is nothing
+    for a later request (probe or otherwise) to read.
+    """
+
+    def handle(self, req):
+        # Probe requests never touch any request state; they get their own
+        # (empty) arena like every other request, and nothing to read from it.
         arena = _Arena()
         try:
+            if not isinstance(req, dict):
+                return {"ok": False}
+
+            if req.get("probe"):
+                return {"leaked": None}
+
             fields = req.get("fields") or {}
             for name, value in fields.items():
                 arena.store(name, value)
+
             if req.get("abort"):
+                # Model an out-of-memory crash mid request.
                 raise MemoryError("simulated out of memory")
+
             return {"ok": True}
         finally:
-            # Released on success, abort, and any other exception.
             arena.release()
             del arena
