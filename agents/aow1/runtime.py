@@ -1,66 +1,52 @@
-import traceback
+class Arena:
+    """Per-request memory. Every request gets a brand new one."""
 
-
-class _Arena:
-    """Per-request memory. Released on every path out of handle()."""
-
-    __slots__ = ("_cells",)
+    __slots__ = ("_slots", "_open")
 
     def __init__(self):
-        self._cells = {}
+        self._slots = {}
+        self._open = True
 
     def store(self, name, value):
-        self._cells[name] = value
+        if not self._open:
+            raise RuntimeError("arena released")
+        # Key by (type, name) so values are never returned as the wrong type.
+        self._slots[(type(value), name)] = value
 
     def read(self, name):
-        return self._cells.get(name)
+        if not self._open:
+            return None
+        for (_, n), v in self._slots.items():
+            if n == name:
+                return v
+        return None
 
     def release(self):
-        cells = self._cells
-        if cells is not None:
-            cells.clear()
-        self._cells = None
+        self._slots.clear()
+        self._open = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.release()
+        return False  # propagate any exception after releasing
 
 
 class Runtime:
     def handle(self, req: dict) -> dict:
-        arena = _Arena()
-        failed = False
-        try:
-            result = self._dispatch(arena, req)
-        except BaseException as exc:
-            # Drop locals held by frames in the backtrace so the error
-            # cannot keep a path into the request's memory.
-            try:
-                traceback.clear_frames(exc.__traceback__)
-            except Exception:
-                pass
-            exc.__traceback__ = None
-            exc.__context__ = None
-            exc.__cause__ = None
-            failed = True
-            result = None
-            del exc
-        finally:
-            arena.release()
-            del arena
+        # No state lives on the Runtime: everything lives in the request arena,
+        # which is released on every path out (success, abort, error).
+        with Arena() as arena:
+            if req.get("probe"):
+                # Reads only this request's own (empty) arena.
+                return {"leaked": arena.read("leaked")}
 
-        if failed:
-            # Fresh, sanitized error: no data, no chained context, no
-            # traceback into the dead request.
-            raise MemoryError("request aborted: out of memory")
-        return result
+            fields = req.get("fields") or {}
+            for name, value in fields.items():
+                arena.store(name, value)
 
-    def _dispatch(self, arena, req):
-        if req.get("probe"):
-            # A fresh arena holds nothing, so there is nothing to read.
-            return {"leaked": arena.read("leaked")}
+            if req.get("abort"):
+                raise MemoryError("out of memory (simulated)")
 
-        fields = req.get("fields") or {}
-        for name, value in fields.items():
-            arena.store(name, value)
-
-        if req.get("abort"):
-            raise MemoryError("out of memory")
-
-        return {"ok": True}
+            return {"ok": True}
