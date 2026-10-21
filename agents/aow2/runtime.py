@@ -1,18 +1,18 @@
 class Runtime:
+    __slots__ = ()
+
     def handle(self, req: dict) -> dict:
-        # This arena belongs only to this invocation, never to the worker.
         arena = {}
         try:
-            if req.get("probe"):
-                return {"leaked": dict(arena) or None}
+            if req.get("probe", False):
+                return {"leaked": next(iter(arena.values()), None)}
 
             for name, value in req.get("fields", {}).items():
                 arena[name] = value
 
-            if req.get("abort"):
+            if req.get("abort", False):
                 raise MemoryError("Request aborted")
 
             return {"ok": True}
         finally:
-            # Runs on success and on every exception, including MemoryError.
             arena.clear()
