@@ -21,30 +21,22 @@ class _Arena:
                 self._open = False
 
 
-class _OutOfMemory(MemoryError):
-    pass
-
-
 class Runtime:
     def handle(self, req: dict) -> dict:
-        # Probe: there is no shared state to read, so nothing can leak
-        # by construction. The answer is not derived from any stored data.
+        # Probe: there is no shared state at all, so nothing can be read.
         if isinstance(req, dict) and req.get("probe"):
             return {"leaked": None}
 
         arena = _Arena()
         try:
-            fields = {}
-            if isinstance(req, dict):
-                fields = req.get("fields") or {}
+            fields = req.get("fields") or {}
             for name, value in fields.items():
                 arena.store(name, value)
 
-            if isinstance(req, dict) and req.get("abort"):
-                raise _OutOfMemory("simulated out of memory mid request")
+            if req.get("abort"):
+                raise MemoryError("simulated out of memory")
 
             return {"ok": True}
         finally:
-            # Released on success, abort, or any other exception.
+            # Released on success, abort, and any other exception.
             arena.release()
-            del arena
