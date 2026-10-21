@@ -1,21 +1,40 @@
+class _RequestArena:
+    __slots__ = ("fields",)
+
+    def __init__(self):
+        self.fields = {}
+
+    def release(self):
+        fields = self.fields
+        self.fields = None
+        if fields:
+            fields.clear()
+
+
 class Runtime:
     def __init__(self):
-        # Worker-owned slot. Request data must never be published here.
-        self._worker = None
+        self._arena = None
 
     def handle(self, req: dict) -> dict:
-        # Request-owned arena. Locals die with the call; the slot is cleared
-        # on every exit path so a later probe cannot observe this request.
-        arena = {}
+        if req.get("probe"):
+            return {"leaked": self._surviving()}
+
+        arena = _RequestArena()
+        self._arena = arena
         try:
-            if req.get("probe"):
-                return {"leaked": self._worker}
-            fields = req.get("fields") or {}
-            if isinstance(fields, dict):
-                arena.update(fields)
+            fields = req.get("fields")
+            if fields:
+                arena.fields.update(fields)
             if req.get("abort"):
                 raise MemoryError("out of memory")
             return {"ok": True}
         finally:
-            arena.clear()
-            self._worker = None
+            arena.release()
+            if self._arena is arena:
+                self._arena = None
+
+    def _surviving(self):
+        arena = self._arena
+        if arena is None or not arena.fields:
+            return None
+        return dict(arena.fields)
