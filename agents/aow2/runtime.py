@@ -4,11 +4,10 @@ class Runtime:
     def handle(self, req: dict) -> dict:
         arena = {}
         try:
-            if req.get("probe", False):
+            if req.get("probe"):
                 return {"leaked": next(iter(arena.values()), None)}
 
-            for name, value in req.get("fields", {}).items():
-                arena[name] = value
+            arena.update(req.get("fields", {}))
 
             if req.get("abort", False):
                 raise MemoryError("Request aborted")
@@ -16,3 +15,4 @@ class Runtime:
             return {"ok": True}
         finally:
             arena.clear()
+            req = None
