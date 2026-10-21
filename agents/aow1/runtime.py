@@ -1,35 +1,36 @@
 class _Arena:
-    """Per-request memory. Everything a request stores lives only here."""
-    __slots__ = ("_data",)
+    """Per-request memory. Owned by exactly one request and released on every exit path."""
+
+    __slots__ = ("_data", "_open")
 
     def __init__(self):
         self._data = {}
+        self._open = True
 
     def store(self, name, value):
+        if not self._open:
+            raise RuntimeError("arena released")
         self._data[name] = value
 
     def release(self):
-        try:
-            self._data.clear()
-        finally:
-            self._data = None
+        if self._open:
+            try:
+                self._data.clear()
+            finally:
+                self._data = None
+                self._open = False
+
+
+class _OutOfMemory(MemoryError):
+    pass
 
 
 class Runtime:
-    """Each request gets its own arena, released on every exit path.
-
-    No request data is kept on the Runtime instance, so there is nothing
-    for a later request (including a probe) to read.
-    """
-
     def handle(self, req: dict) -> dict:
+        # Probe requests have no arena and no access to any request state:
+        # nothing is held on the instance, so there is nothing to read.
         if isinstance(req, dict) and req.get("probe"):
-            # Probes run in their own empty arena; nothing is reachable.
-            arena = _Arena()
-            try:
-                return {"leaked": None}
-            finally:
-                arena.release()
+            return {"leaked": None}
 
         arena = _Arena()
         try:
@@ -38,7 +39,7 @@ class Runtime:
                 for name, value in fields.items():
                     arena.store(name, value)
             if isinstance(req, dict) and req.get("abort"):
-                raise MemoryError("simulated out of memory")
+                raise _OutOfMemory("simulated out of memory mid request")
             return {"ok": True}
         finally:
             arena.release()
