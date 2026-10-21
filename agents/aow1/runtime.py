@@ -1,47 +1,36 @@
 class _Arena:
     """Per-request memory. Everything a request stores lives here and nowhere else."""
 
-    __slots__ = ("_data", "_open")
+    __slots__ = ("_data",)
 
     def __init__(self):
         self._data = {}
-        self._open = True
 
     def store(self, name, value):
-        if not self._open:
-            raise RuntimeError("arena released")
         self._data[name] = value
 
     def release(self):
-        # Drop every reference held by this arena.
-        try:
-            self._data.clear()
-        finally:
-            self._data = None
-            self._open = False
+        self._data.clear()
+        self._data = None
 
 
 class Runtime:
-    """A reused worker: no request state is held on the instance.
+    """A reused worker. Each request owns a fresh arena which is released on
+    every exit path (success, abort, any exception). No request state is kept
+    on the Runtime instance, so nothing can survive from one request to the next."""
 
-    Each call to handle() creates its own arena, and the arena is released in a
-    finally block, so every exit path (success, abort, any exception, including
-    MemoryError) frees the request's data. Probes never consult any stored
-    state; there is none to find, because nothing is kept on the worker.
-    """
-
-    def handle(self, req):
+    def handle(self, req: dict) -> dict:
+        # Probes touch no request memory; with no shared state there is nothing to read.
         if isinstance(req, dict) and req.get("probe"):
             return {"leaked": None}
 
         arena = _Arena()
         try:
-            fields = req.get("fields") if isinstance(req, dict) else None
-            if fields:
-                for name, value in fields.items():
-                    arena.store(name, value)
-            if isinstance(req, dict) and req.get("abort"):
-                raise MemoryError("out of memory while handling request")
+            fields = req.get("fields") or {}
+            for name, value in fields.items():
+                arena.store(name, value)
+            if req.get("abort"):
+                raise MemoryError("simulated out of memory mid request")
             return {"ok": True}
         finally:
             arena.release()
