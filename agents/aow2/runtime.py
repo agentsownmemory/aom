@@ -5,14 +5,13 @@ class Runtime:
         arena = {}
         try:
             if req.get("probe"):
-                return {"leaked": next(iter(arena.values()), None)}
+                return {"leaked": arena.get("fields")}
 
-            arena.update(req.get("fields", {}))
+            arena["fields"] = dict(req.get("fields", {}))
 
-            if req.get("abort", False):
+            if req.get("abort"):
                 raise MemoryError("Request aborted")
 
             return {"ok": True}
         finally:
             arena.clear()
-            req = None
