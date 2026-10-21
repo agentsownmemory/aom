@@ -1,6 +1,5 @@
 class _Arena:
-    """Per-request memory. Everything a request stores lives here and nowhere else."""
-
+    """Per-request memory. Everything a request stores lives only here."""
     __slots__ = ("_data",)
 
     def __init__(self):
@@ -10,27 +9,36 @@ class _Arena:
         self._data[name] = value
 
     def release(self):
-        self._data.clear()
-        self._data = None
+        try:
+            self._data.clear()
+        finally:
+            self._data = None
 
 
 class Runtime:
-    """A reused worker. Each request owns a fresh arena which is released on
-    every exit path (success, abort, any exception). No request state is kept
-    on the Runtime instance, so nothing can survive from one request to the next."""
+    """Each request gets its own arena, released on every exit path.
+
+    No request data is kept on the Runtime instance, so there is nothing
+    for a later request (including a probe) to read.
+    """
 
     def handle(self, req: dict) -> dict:
-        # Probes touch no request memory; with no shared state there is nothing to read.
         if isinstance(req, dict) and req.get("probe"):
-            return {"leaked": None}
+            # Probes run in their own empty arena; nothing is reachable.
+            arena = _Arena()
+            try:
+                return {"leaked": None}
+            finally:
+                arena.release()
 
         arena = _Arena()
         try:
-            fields = req.get("fields") or {}
-            for name, value in fields.items():
-                arena.store(name, value)
-            if req.get("abort"):
-                raise MemoryError("simulated out of memory mid request")
+            fields = req.get("fields") if isinstance(req, dict) else None
+            if fields:
+                for name, value in fields.items():
+                    arena.store(name, value)
+            if isinstance(req, dict) and req.get("abort"):
+                raise MemoryError("simulated out of memory")
             return {"ok": True}
         finally:
             arena.release()
