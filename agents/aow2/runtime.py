@@ -1,24 +1,18 @@
 class Runtime:
-    __slots__ = ()
-
     def handle(self, req: dict) -> dict:
-        # This arena belongs exclusively to this invocation.
+        # The arena belongs exclusively to this invocation.
         arena = {}
         try:
-            if req.get("probe", False):
+            if req.get("probe"):
                 return {"leaked": next(iter(arena.values()), None)}
 
-            fields = req.get("fields", {})
-            if not isinstance(fields, dict):
-                raise TypeError("fields must be a dictionary")
-
-            for name, value in fields.items():
+            for name, value in req.get("fields", {}).items():
                 arena[name] = value
 
             if req.get("abort", False):
-                raise MemoryError("request aborted")
+                raise MemoryError("Request aborted")
 
             return {"ok": True}
         finally:
-            # Also runs on partial writes, aborts, and allocation failures.
+            # Also runs after partial allocation failures and aborts.
             arena.clear()
