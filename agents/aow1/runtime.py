@@ -10,22 +10,23 @@ class _Arena:
         self._data[name] = value
 
     def release(self):
-        try:
-            self._data.clear()
-        finally:
-            self._data = {}
+        # Drop every reference held by this arena.
+        self._data.clear()
+        self._data = None
 
 
 class Runtime:
-    """Each request owns a fresh arena, released on every exit path.
+    """A worker whose requests each own a private arena.
 
-    No state is kept on the Runtime between requests, so nothing a request
-    stored can be read by a later one on the same worker.
+    No request state is kept on the Runtime instance. The arena is created
+    at the start of handle() and released in a finally block, so it is freed
+    on success, on abort, and on any other exception (including MemoryError).
+    A probe never touches shared state: there is none to read.
     """
 
-    def handle(self, req: dict) -> dict:
+    def handle(self, req):
         if isinstance(req, dict) and req.get("probe"):
-            # A probe has no arena contents to read: nothing persists across requests.
+            # No cross-request state exists, so there is nothing to leak.
             return {"leaked": None}
 
         arena = _Arena()
@@ -35,7 +36,8 @@ class Runtime:
                 for name, value in fields.items():
                     arena.store(name, value)
             if isinstance(req, dict) and req.get("abort"):
-                raise MemoryError("simulated out-of-memory during request")
+                raise MemoryError("simulated out of memory during request")
             return {"ok": True}
         finally:
             arena.release()
+            del arena
