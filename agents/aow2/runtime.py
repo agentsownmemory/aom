@@ -1,18 +1,17 @@
 class Runtime:
     def handle(self, req: dict) -> dict:
-        # The arena belongs exclusively to this invocation.
+        # The arena belongs exclusively to this invocation, never the worker.
         arena = {}
         try:
-            if req.get("probe"):
+            if req.get("probe", False):
                 return {"leaked": next(iter(arena.values()), None)}
 
-            for name, value in req.get("fields", {}).items():
-                arena[name] = value
+            arena.update(req.get("fields", {}))
 
             if req.get("abort", False):
-                raise MemoryError("Request aborted")
+                raise MemoryError("Simulated request allocation failure")
 
             return {"ok": True}
         finally:
-            # Also runs after partial allocation failures and aborts.
+            # Also runs on aborts and allocation failures during storage.
             arena.clear()
